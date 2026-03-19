@@ -336,7 +336,6 @@ def nh_stationary_states(
     cut: int   = None,
     tol: float = 1e-6,
     d:   int   = 3,
-    neigs: int = None,
 ) -> StationaryResult:
     """
     Find the stationary right eigenstates of a non-Hermitian Hamiltonian.
@@ -390,11 +389,11 @@ def nh_stationary_states(
     #H_nh.isherm = False
  
     # --- diagonalise: eigenstates() returns (evals, [evecs]) ----------------
-    # Right eigenvectors only (QuTiP returns right evecs for non-Hermitian)
-    if neigs:
-        eigenvalues, eigenstates = H_nh.eigenstates(sparse=True,eigvals=4,sort='high')   # evals sorted by Re(λ)
-    else:
-        eigenvalues, eigenstates = H_nh.eigenstates()   # evals sorted by Re(λ)
+    # Right eigenvectors only (QuTiP returns right evecs for non-Hermitian).
+    # Dense diagonalisation is required: sparse (Krylov/ARPACK) methods target
+    # largest-modulus eigenvalues, not largest-Im(λ), so they would miss the
+    # most stationary modes.
+    eigenvalues, eigenstates = H_nh.eigenstates()
  
     # Re-sort by Im(λ) descending: index 0 = least negative = most stationary
     sort_idx    = np.argsort(eigenvalues.imag)[::-1]
@@ -563,7 +562,13 @@ def time_evo(
         print(f"Pre-computing {n_steps - 1} propagator(s)...")
     
     if opts['uniform_dt']:
-        dt = times[1]-times[0]
+        dts = np.diff(times)
+        if not np.allclose(dts, dts[0], rtol=1e-6):
+            raise ValueError(
+                "uniform_dt=True but time steps are not uniform. "
+                "Pass options={'uniform_dt': False} or use a linspace."
+            )
+        dt = dts[0]
         U = qt.propagator(H, dt)
     else:
         propagators = []
