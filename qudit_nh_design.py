@@ -471,7 +471,8 @@ class EvoResult:
     states:               list
     expect:               list
     measurement_outcomes: list
-    succ_PS:              list      
+    succ_PS:              list
+    entanglement:         np.ndarray  # shape (n_times,) — half-chain EE at each step
 
 
 def time_evo(
@@ -483,6 +484,7 @@ def time_evo(
     measured_sites: list = None,
     e_ops:          list = None,
     force_proj:     bool = False,
+    cut:            int  = None,
     options:        dict = None,
 ) -> EvoResult:
     """
@@ -492,8 +494,7 @@ def time_evo(
         1. Evolve unitarily:  psi -> exp(-i H dt) |psi>
         2. Apply projective measurements on `measured_sites` via
            project_measurements() (sequential Born-rule collapses).
-        3. Record the resulting state and expectation values.
-        TODO: if dt is unifrom, only one propagator is needed.
+        3. Record the resulting state, expectation values, and EE.
 
     Parameters
     ----------
@@ -514,9 +515,16 @@ def time_evo(
     e_ops : list of qt.Qobj, optional
         Global operators whose expectation values are tracked at every time
         point (evaluated *after* measurement).
+    force_proj : bool, optional
+        If True, always collapse onto proj regardless of Born-rule outcome.
+    cut : int, optional
+        Bipartition site for half-chain entanglement entropy.
+        Subsystem A = sites [0..cut-1]. Defaults to N // 2.
     options : dict, optional
         Fine-tuning knobs:
-            'progress' : bool  – print progress at each step (default True).
+            'progress'   : bool – print progress at each step (default True).
+            'uniform_dt' : bool – assume uniform time steps, compute a single
+                           propagator (default True).
 
     Returns
     -------
@@ -524,12 +532,17 @@ def time_evo(
         .times                – input time array as np.ndarray
         .states               – list of qt.Qobj, one per time point
         .expect               – list of np.ndarray, one per e_ops entry
-        .measurement_outcomes – list of qt.Qobj or None, one per time point
+        .measurement_outcomes – reduced norm at each measurement step
+        .succ_PS              – bool list, True if proj outcome was selected
+        .entanglement         – np.ndarray (n_times,), von Neumann EE at cut
     """
     # --- defaults -----------------------------------------------------------
     times          = np.asarray(times, dtype=float)
     measured_sites = measured_sites or []
     e_ops          = e_ops or []
+    cut            = cut if cut is not None else N // 2
+    if not (1 <= cut <= N - 1):
+        raise ValueError(f"cut={cut} must satisfy 1 <= cut <= N-1={N-1}.")
     opts           = {'progress': True, 'uniform_dt': True}
     if options:
         opts.update(options)
@@ -541,9 +554,16 @@ def time_evo(
     measurement_outcomes = [None] * n_steps
     expect_vals          = [np.zeros(n_steps, dtype=float) for _ in e_ops]
     succ_PS              = [True] * n_steps
-    
+    ee_vals              = np.zeros(n_steps, dtype=float)
+
+    def _compute_ee(psi):
+        """Von Neumann EE at bipartition cut via ptrace + entropy_vn."""
+        rho_A = psi.unit().ptrace(list(range(cut)))
+        return qt.entropy_vn(rho_A)
+
     def _record(i, psi):
-        states[i] = psi
+        states[i]   = psi
+        ee_vals[i]  = _compute_ee(psi)
         for k, op in enumerate(e_ops):
             expect_vals[k][i] = qt.expect(op, psi)
     # --- check hermiticity of observables
@@ -612,6 +632,7 @@ def time_evo(
         expect               = expect_vals,
         measurement_outcomes = measurement_outcomes,
         succ_PS              = succ_PS,
+        entanglement         = ee_vals,
     )
 
 
@@ -670,24 +691,27 @@ class TrajResult:
     expect_std:  list
     expect_traj: list
     proj_traj:   list
+    ee_mean:     np.ndarray   # shape (n_times,) — mean EE over trajectories
+    ee_std:      np.ndarray   # shape (n_times,) — std EE over trajectories
+    ee_traj:     np.ndarray   # shape (ntraj, n_times) — per-trajectory EE
     ntraj:       int
  
  
 def _run_single(args):
     """
     Top-level (picklable) worker: runs one trajectory and returns only the
-    expectation values array.  Must be a module-level function for
-    multiprocessing to pickle it.
+    expectation values and entanglement entropy arrays.
+    Must be a module-level function for multiprocessing to pickle it.
     """
-    H, psi0, times, proj, N, measured_sites, e_ops_data, options, seed = args
- 
+    H, psi0, times, proj, N, measured_sites, e_ops_data, options, seed, cut = args
+
     # Each worker gets its own RNG seed so trajectories are independent
     np.random.seed(seed)
- 
+
     # Reconstruct e_ops as Qobj (data was passed as dense arrays + dims
     # to avoid pickling issues with some QuTiP versions)
     e_ops = [qt.Qobj(m, dims=d) for m, d in e_ops_data]
- 
+
     result = time_evo(
         H              = H,
         psi0           = psi0,
@@ -696,10 +720,15 @@ def _run_single(args):
         N              = N,
         measured_sites = measured_sites,
         e_ops          = e_ops,
+        cut            = cut,
         options        = options,
     )
-    # Return only expectation values (real part): shape (n_ops, n_times)
-    return np.array([ev.real for ev in result.expect]), np.array(result.succ_PS)
+    # shape (n_ops, n_times) and (n_times,)
+    return (
+        np.array([ev.real for ev in result.expect]),
+        np.array(result.succ_PS, dtype=bool),
+        result.entanglement,
+    )
  
  
 def run_trajectories(
@@ -712,6 +741,7 @@ def run_trajectories(
     measured_sites: list      = None,
     e_ops:          list      = None,
     n_jobs:         int       = 1,
+    cut:            int       = None,
     options:        dict      = None,
     seed:           int       = None,
 ) -> TrajResult:
@@ -767,35 +797,37 @@ def run_trajectories(
     TrajResult
     """
     import os
- 
+
     times     = np.asarray(times, dtype=float)
     e_ops     = e_ops or []
     n_ops     = len(e_ops)
     n_times   = len(times)
- 
+    cut       = cut if cut is not None else N // 2
+
     # Silence per-step progress inside workers
     inner_opts = dict(options or {})
     inner_opts['progress'] = False
- 
+
     # Serialise e_ops as (dense matrix, dims) tuples for safe pickling
     e_ops_data = [(op.full(), op.dims) for op in e_ops]
- 
+
     # Generate per-trajectory seeds
     rng_base = seed if seed is not None else int.from_bytes(os.urandom(4), 'big')
     seeds    = [rng_base + t for t in range(ntraj)]
- 
-    # Build argument list for workers
+
+    # Build argument list for workers (cut appended at the end)
     traj_args = [
-        (H, psi0, times, proj, N, measured_sites, e_ops_data, inner_opts, s)
+        (H, psi0, times, proj, N, measured_sites, e_ops_data, inner_opts, s, cut)
         for s in seeds
     ]
- 
-    # Storage: shape (ntraj, n_ops, n_times)
-    all_expect = np.zeros((ntraj, n_ops, n_times), dtype=float)
-    all_project = np.zeros((ntraj, n_times), dtype=bool)
- 
+
+    # Storage
+    all_expect  = np.zeros((ntraj, n_ops, n_times), dtype=float)
+    all_project = np.zeros((ntraj, n_times),         dtype=bool)
+    all_ee      = np.zeros((ntraj, n_times),         dtype=float)
+
     n_workers = os.cpu_count() if n_jobs == -1 else n_jobs
- 
+
     if n_workers == 1:
         # --- serial loop with optional tqdm progress bar -------------------
         try:
@@ -804,10 +836,10 @@ def run_trajectories(
         except ImportError:
             iterator = traj_args
             print(f"Running {ntraj} trajectories (install tqdm for a progress bar)...")
- 
+
         for t, args in enumerate(iterator):
-            all_expect[t], all_project[t] = _run_single(args)
- 
+            all_expect[t], all_project[t], all_ee[t] = _run_single(args)
+
     else:
         # --- parallel execution --------------------------------------------
         print(f"Running {ntraj} trajectories on {n_workers} workers...")
@@ -819,32 +851,29 @@ def run_trajectories(
                 pbar = tqdm(total=ntraj, desc="Trajectories", unit="traj")
             except ImportError:
                 pbar = None
- 
+
             for fut in as_completed(futures):
                 t = futures[fut]
-                all_expect[t], all_project[t] = fut.result()
+                all_expect[t], all_project[t], all_ee[t] = fut.result()
                 if pbar:
                     pbar.update(1)
- 
+
             if pbar:
                 pbar.close()
- 
+
     # --- aggregate statistics ----------------------------------------------
-    # all_expect shape: (ntraj, n_ops, n_times)
     expect_mean = [all_expect[:, k, :].mean(axis=0) for k in range(n_ops)]
     expect_std  = [all_expect[:, k, :].std(axis=0)  for k in range(n_ops)]
-    # per-trajectory: list of (ntraj, n_times) arrays, one per observable
     expect_traj = [all_expect[:, k, :] for k in range(n_ops)]
-    proj_traj = all_project
- 
+
     return TrajResult(
         times       = times,
         expect_mean = expect_mean,
         expect_std  = expect_std,
         expect_traj = expect_traj,
-        proj_traj   = proj_traj,
+        proj_traj   = all_project,
+        ee_mean     = all_ee.mean(axis=0),
+        ee_std      = all_ee.std(axis=0),
+        ee_traj     = all_ee,
         ntraj       = ntraj,
     )
- 
-
-
