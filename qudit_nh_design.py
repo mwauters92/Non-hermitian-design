@@ -323,7 +323,7 @@ class StationaryResult:
         Full spectrum (complex) sorted by Im(λ) descending (least negative
         first).
     """
-    steady_eigenvalue:      complex
+    steady_eigenvalue:      list
     steady_states:          list
     degeneracy:             int
     entanglement_entropies: list
@@ -432,7 +432,7 @@ def nh_stationary_states(
         entropies.append(qt.entropy_vn(rho_A))
  
     return StationaryResult(
-        steady_eigenvalue      = eigenvalues[0],
+        steady_eigenvalue      = eigenvalues[0:degeneracy+1],
         steady_states          = steady_states,
         degeneracy             = degeneracy,
         entanglement_entropies = entropies,
