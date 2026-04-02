@@ -543,7 +543,7 @@ def time_evo(
     cut            = cut if cut is not None else N // 2
     if not (1 <= cut <= N - 1):
         raise ValueError(f"cut={cut} must satisfy 1 <= cut <= N-1={N-1}.")
-    opts           = {'progress': True, 'uniform_dt': True}
+    opts           = {'progress': True, 'uniform_dt': True, 'store_states': False}
     if options:
         opts.update(options)
 
@@ -562,7 +562,8 @@ def time_evo(
         return qt.entropy_vn(rho_A)
 
     def _record(i, psi):
-        states[i]   = psi
+        if opts['store_states']:
+            states[i]   = psi
         ee_vals[i]  = _compute_ee(psi)
         for k, op in enumerate(e_ops):
             expect_vals[k][i] = qt.expect(op, psi)
