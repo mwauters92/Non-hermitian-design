@@ -271,6 +271,7 @@ def project_measurements(psi: qt.Qobj, N: int, proj: qt.Qobj, sites=None, force_
 
     comp_proj = qt.qeye(3) - proj  # complementary projector (I - P)
     succ_PS = True
+    reduced_norm=1
     for j in sites:
         # Embed projectors in the full Hilbert space
         P_emb  = embed_on_site(proj,      j, N)
@@ -289,7 +290,7 @@ def project_measurements(psi: qt.Qobj, N: int, proj: qt.Qobj, sites=None, force_
             else:
                 psi = cP_emb * psi
                 succ_PS = False
-        reduced_norm = psi.norm()
+        reduced_norm *= psi.norm()
         psi = psi.unit()   # normalise after each collapse
 
     return psi, reduced_norm, succ_PS

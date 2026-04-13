@@ -50,6 +50,13 @@ import matplotlib.ticker as mticker
 from matplotlib.lines import Line2D
 from scipy.optimize import curve_fit
 
+from matplotlib import rc, rcParams
+params = {'legend.fontsize': 15, "axes.labelsize": 15}
+rc('text', usetex=True)
+rc('xtick', labelsize=14)
+rc('ytick', labelsize=14)
+rcParams.update(params)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -216,8 +223,10 @@ def make_figure1(data, params, fit_result, fmt="pdf", outdir=".", show=True,
     # ---- Panel 3: entanglement entropy ----------------------------------------
     ax3.plot(times, ps_ee/np.log(2),  color="#1a237e", lw=1.8, label="Post-selected")
     ax3.plot(times, eff_ee/np.log(2), color="#b71c1c", lw=1.8, ls="--", label="Effective")
+    alow, bhigh = ax3.set_ylim()
+    ax3.set_ylim([alow, 1.1])
     ax3.set_xlabel("t")
-    ax3.set_ylabel("$S_{\\rm EE}$ (nats)")
+    ax3.set_ylabel("$S_{\\rm EE}/\log 2$")
     ax3.set_title("Half-chain entanglement entropy")
     ax3.legend(fontsize=8)
 
@@ -382,12 +391,12 @@ def save_fit_result(fit_result, params, outdir):
 def _make_title(params):
     if not params:
         return "Qutrit dynamics"
-    return (f"N={params.get('N','?')}  "
-            f"h={params.get('h','?')}  "
-            f"J={params.get('J','?')}  "
-            f"Ω={params.get('Omega','?')}  "
-            f"tf={params.get('tf','?')}  "
-            f"nstep={params.get('nstep','?')}")
+    return (rf"$N={params.get('N','?')}  $"
+            rf"$\omega={params.get('h','?')}  $"
+            rf"$J={params.get('J','?')} $"
+            rf"$\Omega={params.get('Omega','?')}  $"
+            rf"$t_f={params.get('tf','?')}  $"
+            r"nstep={params.get('nstep','?')}")
 
 
 def _stem(params, outdir):
