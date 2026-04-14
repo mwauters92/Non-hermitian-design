@@ -544,7 +544,7 @@ def time_evo(
     cut            = cut if cut is not None else N // 2
     if not (1 <= cut <= N - 1):
         raise ValueError(f"cut={cut} must satisfy 1 <= cut <= N-1={N-1}.")
-    opts           = {'progress': True, 'uniform_dt': True, 'store_states': False}
+    opts           = {'progress': True, 'uniform_dt': True, 'store_states': False, 'propagator':True}
     if options:
         opts.update(options)
 
@@ -582,37 +582,40 @@ def time_evo(
     # which is efficient for a time-independent Hamiltonian.
     if opts['progress']:
         print(f"Pre-computing {n_steps - 1} propagator(s)...")
-    
-    if opts['uniform_dt']:
-        dts = np.diff(times)
-        if not np.allclose(dts, dts[0], rtol=1e-6):
-            raise ValueError(
-                "uniform_dt=True but time steps are not uniform. "
-                "Pass options={'uniform_dt': False} or use a linspace."
-            )
-        dt = dts[0]
-        U = qt.propagator(H, dt)
-    else:
-        propagators = []
-        for i in range(n_steps - 1):
-            dt = times[i + 1] - times[i]
-            if dt < 0:
+    if opts['propagator']:
+        if opts['uniform_dt']:
+            dts = np.diff(times)
+            if not np.allclose(dts, dts[0], rtol=1e-6):
                 raise ValueError(
-                    f"times must be monotonically increasing "
-                    f"(times[{i+1}]={times[i+1]:.4g} < times[{i}]={times[i]:.4g})."
+                    "uniform_dt=True but time steps are not uniform. "
+                    "Pass options={'uniform_dt': False} or use a linspace."
                 )
-            propagators.append(qt.propagator(H, dt))
+            dt = dts[0]
+            U = qt.propagator(H, dt)
+        else:
+            propagators = []
+            for i in range(n_steps - 1):
+                dt = times[i + 1] - times[i]
+                if dt < 0:
+                    raise ValueError(
+                        f"times must be monotonically increasing "
+                        f"(times[{i+1}]={times[i+1]:.4g} < times[{i}]={times[i]:.4g})."
+                    )
+                propagators.append(qt.propagator(H, dt))
 
     # --- main loop ----------------------------------------------------------
     for i, t in enumerate(times[1:]):
         step = i + 1
 
         # 1. Unitary evolution
-        if not opts['uniform_dt']:
-            U = propagators[i]
-        
-        psi = (U * psi).unit()
+        if opts['propagator']:
+            if not opts['uniform_dt']:
+                U = propagators[i]
 
+            psi = (U * psi).unit()
+        else:
+            res_tmp = qt.mesolve(H, psi, np.linspace(0,t-times[i-1],2),options={'normalize_output':True})
+            psi=res_tmp.states[-1]
         # 2. Projective measurements
         if measured_sites:
             psi, reduced_norm, ps = project_measurements(psi, N, proj, sites=measured_sites,force_proj=force_proj)
