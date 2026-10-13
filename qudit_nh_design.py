@@ -54,8 +54,8 @@ def embedded_pauli(alpha: str, a: int, b: int, d: int = 3) -> qt.Qobj:
         raise ValueError("Level indices a and b must be different.")
     if not (0 <= a < d and 0 <= b < d):
         raise ValueError(f"Level indices must be in [0, {d-1}].")
-    if alpha not in ('x', 'y', 'z', 'p-', 'p+'):
-        raise ValueError("alpha must be 'x', 'y', 'z', 'p-' or 'p+'.")
+    if alpha not in ('x', 'y', 'z', 'p-', 'p+','-', '+'):
+        raise ValueError("alpha must be 'x', 'y', 'z', '-', '+', 'p-' or 'p+'.")
 
     # Start from the identity in d dimensions
     #mat = np.eye(d, dtype=complex)
@@ -65,6 +65,12 @@ def embedded_pauli(alpha: str, a: int, b: int, d: int = 3) -> qt.Qobj:
     # We adopt the convention: a <-> |0>, b <-> |1> in the subspace
     if alpha == 'x':
         mat[a, a] = 0.0;  mat[a, b] = 1.0
+        mat[b, a] = 1.0;  mat[b, b] = 0.0
+    elif alpha == '+':
+        mat[a, a] = 0.0;  mat[a, b] = 1.0
+        mat[b, a] = 0.0;  mat[b, b] = 0.0
+    elif alpha == '-':
+        mat[a, a] = 0.0;  mat[a, b] = 0.0
         mat[b, a] = 1.0;  mat[b, b] = 0.0
     elif alpha == 'y':
         mat[a, a] = 0.0;  mat[a, b] = -1j
